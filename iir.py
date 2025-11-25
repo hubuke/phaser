@@ -21,9 +21,15 @@ class Dsp(Module):
         self.p = p = Signal((48, True), reset_less=True)
         self.sync += [m.eq(a * b), p.eq(m + c), If(mux_p, p.eq(m + p))]
 
-
 class Iir(Module):
     def __init__(self, w_coeff, w_data, log2_a0, n_profiles, n_channels):
+        """
+        w_coeff: 16 bits
+        w_data: ADC_DATA_WIDTH = 16 bits
+        log2_a0: log2 of a0 coefficient = 14 bits
+        n_profiles: number of filter profiles = 4
+        n_channels: number of channels = 2
+        """
         # input strobe signal (start processing all channels)
         self.stb_in = stb_in = Signal()
         self.stb_out = stb_out = Signal()  # output strobe signal (all channels done)
@@ -77,21 +83,22 @@ class Iir(Module):
         self.submodules.dsp = dsp = Dsp()
         assert w_data <= len(dsp.b)
         assert w_coeff <= len(dsp.a)
-        shift_c = len(dsp.a) + len(dsp.b) - w_data - (w_data - log2_a0)
-        shift_a = len(dsp.a) - w_coeff
-        shift_b = len(dsp.b) - w_data
+        # shift_c = len(dsp.a) + len(dsp.b) - w_data - (w_data - log2_a0)  # 25 bits without -9; 16 bits with -9
+        shift_a = len(dsp.a) - w_coeff # 25-16 = 9 bits
+        shift_b = len(dsp.b) - w_data # 18-16 = 2 bits
+        shift_c = shift_a + shift_b # 9+2 = 11 bits
         # +1 from standard sign bit
-        n_sign = len(dsp.p) - len(dsp.a) - len(dsp.b) + w_data - log2_a0 + 1
-        c_rounding_offset = Constant((1 << shift_c - 1) - 1, shift_c)
+        n_sign = len(dsp.p) - len(dsp.a) - len(dsp.b) + w_data - log2_a0 + 1 # 48-25-18+16-14+1 = 8 bits 
+        c_rounding_offset = Constant((1 << shift_c - 1) - 1, shift_c) # 25 or 16 bits of 1s depending on -9
 
         self.sync += [
             # default to 0 and set to 1 further down if computation done in this cycle
             stb_out.eq(0),
-            dsp.a.eq(coeff[step][profile_index][channel_index] << shift_a),
+            dsp.a.eq(coeff[step][profile_index][channel_index] << shift_a), # 16 bits + 9 bits shift = 25 bits
             dsp.b.eq(
-                x[channel_index][step] << shift_b
+                x[channel_index][step] << shift_b # 16+2=18 bits
             ),  # overwritten later if at step==2
-            dsp.c.eq(Cat(c_rounding_offset, offset[profile_index][channel_index])),
+            dsp.c.eq(Cat(c_rounding_offset, offset[profile_index][channel_index])), # 16 bit offset + 25 bits rounding offsets = 41 bits
             If(
                 stb_in & ~busy,
                 busy.eq(1),
@@ -132,10 +139,10 @@ class Iir(Module):
             ch_profile_last_ch.eq(ch_profile[channel_index - 1]),
             [o.eq(y1[ch_profile[ch]][ch]) for ch, o in enumerate(outp)],
             # clipping to positive output range
-            y0_clipped.eq(dsp.p >> shift_c),
+            y0_clipped.eq(dsp.p >> (shift_c+22)), # 48 bit - 11 bits = 37 bits
             If(
-                dsp.p[-n_sign:] != 0,  # if out of output range
-                y0_clipped.eq((1 << w_data - 1) - 1),
+                dsp.p[-n_sign:] != 0,  # dsp.p[47:40] != 0
+                y0_clipped.eq((1 << w_data - 1) - 1), # 16-1 bits -1 = 32767
             ),
             If(dsp.p[-1] != 0, y0_clipped.eq(0)),  # if negative
         ]
