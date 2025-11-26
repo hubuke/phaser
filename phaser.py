@@ -442,7 +442,8 @@ class Phaser(Module):
 if __name__ == "__main__":
     from migen.build.platforms.sinara.phaser import Platform
 
-    platform = Platform(speed_grade="-3")
+    # platform = Platform(speed_grade="-3")
+    platform = Platform()
     # platform.toolchain.additional_commands.extend([
     #     "set argv phaser.bit",
     #     "source ../load.tcl",
