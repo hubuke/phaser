@@ -408,7 +408,7 @@ class Phaser(Module):
             ]
 
         # use liberally for debugging
-        self.comb += [platform.request("test_point", 0).eq(adc.data[1][0])]
+        # self.comb += [platform.request("test_point", 0).eq(adc.data[1][0])]
         # self.comb += [
         #     Cat([platform.request("test_point", i) for i in range(6)]).eq(
         #         Cat(

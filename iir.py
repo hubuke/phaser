@@ -9,6 +9,7 @@ from migen import *
 
 N_COEFF = 3  # [b0, b1, a0] number of coefficients for a first order iir
 
+SHIFT_P = 11  # number of bits to right shift the dsp.p output for higher dynamic range
 
 class Dsp(Module):
     def __init__(self):
@@ -83,22 +84,16 @@ class Iir(Module):
         self.submodules.dsp = dsp = Dsp()
         assert w_data <= len(dsp.b)
         assert w_coeff <= len(dsp.a)
-        # shift_c = len(dsp.a) + len(dsp.b) - w_data - (w_data - log2_a0)  # 25 bits without -9; 16 bits with -9
-        shift_a = len(dsp.a) - w_coeff # 25-16 = 9 bits
-        shift_b = len(dsp.b) - w_data # 18-16 = 2 bits
-        shift_c = shift_a + shift_b # 9+2 = 11 bits
-        # +1 from standard sign bit
-        n_sign = len(dsp.p) - len(dsp.a) - len(dsp.b) + w_data - log2_a0 + 1 # 48-25-18+16-14+1 = 8 bits 
-        c_rounding_offset = Constant((1 << shift_c - 1) - 1, shift_c) # 25 or 16 bits of 1s depending on -9
+        overfloat_bits = len(dsp.p) - w_data - SHIFT_P
 
         self.sync += [
             # default to 0 and set to 1 further down if computation done in this cycle
             stb_out.eq(0),
-            dsp.a.eq(coeff[step][profile_index][channel_index] << shift_a), # 16 bits + 9 bits shift = 25 bits
+            dsp.a.eq(coeff[step][profile_index][channel_index]),
             dsp.b.eq(
-                x[channel_index][step] << shift_b # 16+2=18 bits
-            ),  # overwritten later if at step==2
-            dsp.c.eq(Cat(c_rounding_offset, offset[profile_index][channel_index])), # 16 bit offset + 25 bits rounding offsets = 41 bits
+                x[channel_index][step]
+            ),  # overwritten later if at step==2,
+            dsp.c.eq(offset[profile_index][channel_index] << w_data),
             If(
                 stb_in & ~busy,
                 busy.eq(1),
@@ -115,7 +110,7 @@ class Iir(Module):
                     step.eq(0),
                     channel_index.eq(channel_index + 1),
                     profile_index.eq(ch_profile[channel_index + 1]),
-                    dsp.b.eq(y1[profile_index][channel_index] << shift_b),
+                    dsp.b.eq(y1[profile_index][channel_index]),
                     If(
                         (channel_index != 0)
                         & (channel_index != n_channels + 1)
@@ -139,10 +134,12 @@ class Iir(Module):
             ch_profile_last_ch.eq(ch_profile[channel_index - 1]),
             [o.eq(y1[ch_profile[ch]][ch]) for ch, o in enumerate(outp)],
             # clipping to positive output range
-            y0_clipped.eq(dsp.p >> (shift_c+22)), # 48 bit - 11 bits = 37 bits
+            y0_clipped.eq(dsp.p >> SHIFT_P), 
             If(
-                dsp.p[-n_sign:] != 0,  # dsp.p[47:40] != 0
-                y0_clipped.eq((1 << w_data - 1) - 1), # 16-1 bits -1 = 32767
+                (dsp.p >> SHIFT_P) > (1 << (w_data - 1)) - 1,
+                y0_clipped.eq((1 << (w_data - 1)) - 1), 
+            ).Else(
+                y0_clipped.eq(dsp.p >> SHIFT_P)
             ),
-            If(dsp.p[-1] != 0, y0_clipped.eq(0)),  # if negative
+            If(dsp.p[-1] != 0, y0_clipped.eq(0)),
         ]
