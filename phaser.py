@@ -294,17 +294,10 @@ class Phaser(Module):
             assert SERVO_CHANNELS <= len(adc.data)
             sample_reg = Signal((16, True), name=f"adc_sample_reg_{ch}")
             self.sync += If(adc.done, sample_reg.eq(adc.data[ch]))
-            # self.sync += If(adc.done, sample_reg.eq(0xFFFF))
-
-            # expose the registered value to the decoder read ports combinatorially
-            # split into low / high bytes to match the two Register() entries
             self.comb += [
                 self.decoder.get(f"adc_data{ch}_lo", "read").eq(sample_reg[0:8]),
                 self.decoder.get(f"adc_data{ch}_hi", "read").eq(sample_reg[8:16]),
-                # self.decoder.get(f"adc_data{ch}_lo", "read").eq(0xaa),
-                # self.decoder.get(f"adc_data{ch}_hi", "read").eq(0xbb),
             ]
-
 
         # connect iir to servo data registers
         for i in range(SERVO_CHANNELS):
@@ -408,7 +401,6 @@ class Phaser(Module):
             ]
 
         # use liberally for debugging
-        self.comb += [platform.request("test_point", 0).eq(adc.data[1][0])]
         # self.comb += [
         #     Cat([platform.request("test_point", i) for i in range(6)]).eq(
         #         Cat(
